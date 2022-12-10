@@ -8,11 +8,11 @@ SET(CMAKE_CXX_STANDARD_REQUIRED True)
 # As of now, Clang does not support std::ranges. Use GCC instead.
 # SET(CMAKE_CXX_COMPILER /usr/bin/clang++)
 SET(CMAKE_CXX_COMPILER /usr/bin/g++)
-SET(CMAKE_CXX_FLAGS "-Wextra -Wall -Wshadow -Wpedantic -Werror -O3")
+SET(CMAKE_CXX_FLAGS "-Wextra -Wall -Wshadow -Wpedantic -O3")
 
 SET(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-ADD_DEFINITIONS(-DDEBUG -DPARALLEL)
+ADD_DEFINITIONS(-DPARALLEL)
 
 SET(SRC_FILES
     csc.cpp

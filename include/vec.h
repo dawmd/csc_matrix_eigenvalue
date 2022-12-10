@@ -48,9 +48,9 @@ public:
         std::mt19937 int_gen(std::chrono::steady_clock::now().time_since_epoch().count());
         std::uniform_real_distribution<> url(interval_left, interval_right);
 
-        std::for_each(PAR std::begin(result), std::end(result), [&](T &value) {
+        for (auto &value : result) {
             value = url(int_gen);
-        });
+        }
 
         return result;
     }

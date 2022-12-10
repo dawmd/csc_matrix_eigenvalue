@@ -3,11 +3,10 @@
 
 #include <algorithm>
 #include <concepts>
+#include <cstddef>
 #include <numeric>
 #include <ranges>
-#include <span>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -30,7 +29,7 @@
 
 namespace csc {
 
-template<typename T, std::size_t R, std::size_t C>
+template<typename T = float>
     requires numeric<T>
 class csc_mat {
 private:
@@ -46,36 +45,33 @@ private:
     };
 
 private:
+    // Size of the matrix.
+    std::size_t              m_rows;
+    std::size_t              m_cols;
     // Stores only the non-zero elements of the matrix.
     std::vector<element>     m_values;
     // m_col_count[i] = the number of non-zero elements in the columns 0..(i - 1).
     std::vector<std::size_t> m_col_count;
 
 public:
-    // The compiler cannot perform implicit conversion from C-style arrays to std::span
-    // when there are multiple arguments provided. We need to do that by hand.
-    template<typename U, std::size_t N, typename I, typename J>
-    csc_mat(const U (&data)[N], I &&indices, J &&col_count)
-    : csc_mat(std::span(data), std::forward<I>(indices), std::forward<J>(col_count)) {}
-
-    template<typename U, std::size_t N, typename I, std::size_t M, typename J>
-    csc_mat(const std::span<U, N> data, const I (&indices)[M], J &&col_count)
-    : csc_mat(data, std::span(indices), std::forward<J>(col_count)) {}
-
-    template<typename U, std::size_t N, typename I, std::size_t M, typename J, std::size_t K>
-    csc_mat(const std::span<U, N> data, const std::span<I, M> indices, const J (&col_count)[K])
-    : csc_mat(data, indices, std::span(col_count)) {}
-
-    template<typename U, std::size_t N, typename I, std::size_t M, typename J, std::size_t K>
-        requires std::convertible_to<U, T> &&
-                 std::convertible_to<I, std::size_t> &&
-                 std::convertible_to<J, std::size_t>
     constexpr csc_mat(
-        const std::span<const U, N> values,
-        const std::span<const I, M> rows,
-        const std::span<const J, K> col_count)
-    : m_col_count(C + 1, 0)
+        const std::ranges::range auto &values,
+        const std::ranges::range auto &idxs,
+        const std::ranges::range auto &col_count,
+        const std::size_t rows,
+        const std::size_t cols)
+    : m_rows(rows)
+    , m_cols(cols)
+    , m_col_count(cols + 1, 0)
     {
+        using values_t    = std::ranges::range_value_t<decltype(values)>;
+        using idxs_t      = std::ranges::range_value_t<decltype(idxs)>;
+        using col_count_t = std::ranges::range_value_t<decltype(col_count)>;
+
+        static_assert(std::convertible_to<values_t, T>);
+        static_assert(std::convertible_to<idxs_t, std::size_t>);
+        static_assert(std::integral<col_count_t>);
+
         const std::size_t size = values.size();
         m_values.reserve(size);
 
@@ -83,21 +79,26 @@ public:
         std::size_t ci = 0; // column index
 
         for (std::size_t i = 0; i < size; ++i) {
+            while (ci <= cols && std::cmp_greater_equal(i, col_count[ci])) {
+                m_col_count[ci++] = vi;
+            }
+
             if (values[i] == 0) {
                 continue;
             }
 
-            m_values.emplace_back(element(values[i], rows[i]));
+            LOG("\tValue: ", values[i], "; idx = ", idxs[i]);
+            m_values.emplace_back(element(values[i], idxs[i]));
             ++vi;
+        }
 
-            while (ci + 1 < col_count.size() && std::cmp_greater_equal(i + 1, col_count[ci])) {
-                m_col_count[++ci] = vi;
-            }
+        while (ci <= cols) {
+            m_col_count[ci++] = vi;
         }
 
         m_values.resize(vi);
 
-        for (std::size_t i = 0; i < C; ++i) {
+        for (std::size_t i = 0; i < cols; ++i) {
             std::sort(
                 std::begin(m_values) + m_col_count[i],
                 std::begin(m_values) + m_col_count[i + 1],
@@ -106,20 +107,29 @@ public:
                 }
             );
         }
+
+        for (auto &x : m_values) {
+            LOG("\t(", x.m_row, ", ", x.m_value, ")");
+        }
+        for (auto &x : m_col_count) {
+            LOG("\t", x);
+        }
+        LOG("\n\n");
     }
 
     template<typename U>
     constexpr vec<multiply_t<T, U>> operator*(const vec<U> &vector) const {
         using result_type = multiply_t<T, U>;
-        if (vector.size() != C) {
+
+        if (vector.size() != m_cols) {
             throw std::out_of_range("Invalid size of the vector.");
         }
         
-        vec<result_type> result(0, R);
+        vec<result_type> result(0, m_rows);
         std::size_t vi = 0; // values index
         std::size_t ci = 0; // column index
 
-        while (ci < C && vi < m_values.size()) {
+        while (ci < m_cols && vi < m_values.size()) {
             const auto limit = m_col_count[ci + 1];
             const auto vv = vector[ci++]; // ci-th value of the vector v
 
@@ -136,7 +146,7 @@ public:
     }
 
     constexpr bool is_upper_triangular() const {
-        for (std::size_t i = 0; i < C; ++i) {
+        for (std::size_t i = 0; i < m_cols; ++i) {
             if (m_col_count[i] < m_col_count[i + 1]) {
                 const auto &elem = m_values[m_col_count[i + 1] - 1];
                 if (elem.m_row > i) {
@@ -152,9 +162,10 @@ public:
     constexpr vec<multiply_t<T, U>> solve_upper_triangular(const vec<U> &vector) const {
         using result_type = multiply_t<T, U>;
 
-        if (C != vector.size()) {
+        if (m_cols != vector.size()) {
             throw std::out_of_range("Vector is of invalid size.");
         }
+
         ASSERT("The matrix is not upper-triangular.", is_upper_triangular());
 
         const auto size = vector.size();
@@ -167,7 +178,7 @@ public:
 
         while (vi < size) {
             const std::size_t limit = revc[ci] - revc[ci + 1];
-            const std::size_t idx = R - ci - 1;
+            const std::size_t idx = m_rows - ci - 1;
 
             ASSERT("The matrix is not invertible.", revv[vi].m_row   == ci);
             ASSERT("The matrix is not invertible.", revv[vi].m_value !=  0);
@@ -186,7 +197,7 @@ public:
     }
 
     T find_max_eigenvalue(const T threshhold = 1e-8) const {
-        static_assert(C == R, "We define eigenvalues only for square matrices.");
+        ASSERT("We define eigenvalues only for square matrices.", m_cols == m_rows);
 
         constexpr std::size_t MAX_ATTEMPTS_COUNT         = 5;
         constexpr std::size_t MAX_ITERATION_COUNT        = 50;
@@ -194,7 +205,7 @@ public:
 
         for (std::size_t i = 0; i < MAX_ATTEMPTS_COUNT; ++i) {
             // Iteration vector: choose at random
-            vec<T> it_vec = vec<T>::random_vec(C, 0.0L, 1.0L);
+            vec<T> it_vec = vec<T>::random_vec(m_cols, 0.0L, 1.0L);
             
             // Perform the power iteration method at most
             //   MAX_ITERATION_COUNT * MAX_SINGLE_ITERATION_COUNT
@@ -202,12 +213,15 @@ public:
             // Otherwise choose a new random vector.
             for (std::size_t j = 0; j < MAX_ITERATION_COUNT; ++j) {
                 for (std::size_t u = 0; u < MAX_SINGLE_ITERATION_COUNT; ++u) {
+                    LOG("\tit_vec: ", it_vec);
                     it_vec = this[0] * it_vec;
                     it_vec.normalize();
                 }
 
+                LOG("it_vec: ", it_vec);
                 // The vector of the next iteration
                 const auto new_it_vec = this[0] * it_vec;
+                LOG("new_it_vec:", new_it_vec);
 
                 // Approximate the eigenvalue. Choose the biggest value
                 // out of the fractions of non-zero elements of it_vec
@@ -238,14 +252,15 @@ public:
                     std::begin(new_it_vec),
                     std::end(new_it_vec),
                     std::begin(it_vec),
-                    0.0L,
+                    static_cast<T>(0),
                     std::plus{},
                     [eigenvalue](const auto lhs, const auto rhs) {
-                        return std::abs(std::abs(lhs) / eigenvalue - std::abs(rhs));
+                        return std::abs((std::abs(lhs) / eigenvalue) - std::abs(rhs));
                     }
                 );
 
-                if (total_error <= C * threshhold) {
+                LOG("total_error: ", total_error);
+                if (total_error <= m_cols * threshhold) {
                     return eigenvalue;
                 }
 
