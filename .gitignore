@@ -3,3 +3,4 @@ build
 tests/*
 
 !tests/generate.py
+!tests/run_tests.sh

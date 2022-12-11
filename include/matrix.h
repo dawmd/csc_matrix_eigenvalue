@@ -13,6 +13,8 @@
 #include <common.h>
 #include <vec.h>
 
+#include <iostream>
+
 #ifdef DEBUG
 #include <logger.h>
 #define LOG(...) log(__VA_ARGS__)
@@ -87,7 +89,6 @@ public:
                 continue;
             }
 
-            LOG("\tValue: ", values[i], "; idx = ", idxs[i]);
             m_values.emplace_back(element(values[i], idxs[i]));
             ++vi;
         }
@@ -107,14 +108,6 @@ public:
                 }
             );
         }
-
-        for (auto &x : m_values) {
-            LOG("\t(", x.m_row, ", ", x.m_value, ")");
-        }
-        for (auto &x : m_col_count) {
-            LOG("\t", x);
-        }
-        LOG("\n\n");
     }
 
     template<typename U>
@@ -166,7 +159,8 @@ public:
             throw std::out_of_range("Vector is of invalid size.");
         }
 
-        ASSERT("The matrix is not upper-triangular.", is_upper_triangular());
+        // The matrix is not upper-triangular.
+        ASSERT(is_upper_triangular());
 
         const auto size = vector.size();
         auto revv = m_values    | std::views::reverse; // Reversed values
@@ -180,8 +174,10 @@ public:
             const std::size_t limit = revc[ci] - revc[ci + 1];
             const std::size_t idx = m_rows - ci - 1;
 
-            ASSERT("The matrix is not invertible.", revv[vi].m_row   == ci);
-            ASSERT("The matrix is not invertible.", revv[vi].m_value !=  0);
+            // The matrix is not invertible.
+            ASSERT(revv[vi].m_row   == ci);
+            ASSERT(revv[vi].m_value !=  0);
+            
             result[idx] /= revv[vi].m_value;
 
             for (std::size_t offset = 1; offset < limit; ++offset) {
@@ -196,16 +192,17 @@ public:
         return result;
     }
 
-    T find_max_eigenvalue(const T threshhold = 1e-8) const {
-        ASSERT("We define eigenvalues only for square matrices.", m_cols == m_rows);
+    T find_max_eigenvalue(const T threshhold = 1e-6, const bool use_relative_error = true) const {
+        // We define eigenvalues only for square matrices.
+        ASSERT(m_cols == m_rows);
 
-        constexpr std::size_t MAX_ATTEMPTS_COUNT         = 5;
+        constexpr std::size_t MAX_ATTEMPTS_COUNT         = 10;
         constexpr std::size_t MAX_ITERATION_COUNT        = 50;
         constexpr std::size_t MAX_SINGLE_ITERATION_COUNT = 20;
 
         for (std::size_t i = 0; i < MAX_ATTEMPTS_COUNT; ++i) {
             // Iteration vector: choose at random
-            vec<T> it_vec = vec<T>::random_vec(m_cols, 0.0L, 1.0L);
+            vec<T> it_vec = vec<T>::random_vec(m_cols);
             
             // Perform the power iteration method at most
             //   MAX_ITERATION_COUNT * MAX_SINGLE_ITERATION_COUNT
@@ -213,54 +210,50 @@ public:
             // Otherwise choose a new random vector.
             for (std::size_t j = 0; j < MAX_ITERATION_COUNT; ++j) {
                 for (std::size_t u = 0; u < MAX_SINGLE_ITERATION_COUNT; ++u) {
-                    LOG("\tit_vec: ", it_vec);
                     it_vec = this[0] * it_vec;
                     it_vec.normalize();
                 }
 
-                LOG("it_vec: ", it_vec);
                 // The vector of the next iteration
                 const auto new_it_vec = this[0] * it_vec;
-                LOG("new_it_vec:", new_it_vec);
 
-                // Approximate the eigenvalue. Choose the biggest value
-                // out of the fractions of non-zero elements of it_vec
-                // and their non-zero counterparts in new_it_vec.
-                const auto eigenvalue = std::transform_reduce(
-                    PAR
-                    std::begin(new_it_vec),
-                    std::end(new_it_vec),
+                const T numerator = std::inner_product(
                     std::begin(it_vec),
-                    static_cast<T>(0),
-                    [](const auto lhs, const auto rhs) {
-                        return std::max(lhs, rhs);
-                    },
-                    [](const auto lhs, const auto rhs) {
-                        return (lhs != 0 && rhs != 0)
-                                ? std::abs(lhs / rhs)
-                                : static_cast<T>(0);
-                    }
+                    std::end(it_vec),
+                    std::begin(new_it_vec),
+                    T(0)
                 );
+
+                const T denominator = std::inner_product(
+                    std::begin(it_vec),
+                    std::end(it_vec),
+                    std::begin(it_vec),
+                    T(0)
+                );
+
+                if (denominator == 0) {
+                    it_vec = new_it_vec;
+                    it_vec.normalize();
+                    continue;
+                }
+
+                // Rayleigh's quotient 
+                const T eigenvalue = std::abs(numerator) / denominator;
                 
                 // There's no meaning in continuing with the current vector.
                 if (eigenvalue == 0) {
                     break;
                 }
 
-                const auto total_error = std::transform_reduce(
-                    PAR
-                    std::begin(new_it_vec),
-                    std::end(new_it_vec),
-                    std::begin(it_vec),
-                    static_cast<T>(0),
-                    std::plus{},
-                    [eigenvalue](const auto lhs, const auto rhs) {
-                        return std::abs((std::abs(lhs) / eigenvalue) - std::abs(rhs));
-                    }
-                );
+                const vec<T> error_vec = new_it_vec - eigenvalue * it_vec;
 
-                LOG("total_error: ", total_error);
-                if (total_error <= m_cols * threshhold) {
+                const T error = [&]() {
+                    return use_relative_error
+                            ? error_vec.norm() / (eigenvalue * it_vec.norm())
+                            : error_vec.norm();
+                }();
+
+                if (error <= threshhold) {
                     return eigenvalue;
                 }
 

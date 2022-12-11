@@ -42,7 +42,7 @@ public:
     constexpr vec(std::span<T, N> init_values)
     : super(init_values.data(), init_values.size()) {}
 
-    static inline vec<T> random_vec(std::size_t size, T interval_left = 0, T interval_right = 1) {
+    static inline vec<T> random_vec(std::size_t size, T interval_left = T(0), T interval_right = T(1)) {
         vec<T> result(size);
 
         std::mt19937 int_gen(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -60,7 +60,7 @@ public:
             PAR
             std::begin(*this),
             std::end(*this),
-            0L,
+            static_cast<T>(0),
             std::plus{},
             [](T value) { return value * value; }
         ));
@@ -72,7 +72,7 @@ public:
             std::begin(*this),
             std::end(*this),
             std::begin(other),
-            0L,
+            static_cast<T>(0),
             std::plus{},
             [](const auto lhs, const auto rhs) {
                 const auto result = lhs - rhs;
@@ -87,7 +87,7 @@ public:
             std::begin(*this),
             std::end(*this),
             std::begin(other),
-            0L,
+            static_cast<T>(0),
             std::plus{},
             [scalar](const auto lhs, const auto rhs) {
                 const auto result = lhs - scalar * rhs;
